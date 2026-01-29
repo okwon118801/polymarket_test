@@ -1,5 +1,15 @@
 export type TradingMode = "mock" | "paper" | "live";
 
+export type MarketDataMode = "MOCK" | "REPLAY" | "LIVE";
+
+export interface ReplayConfig {
+  filePath: string;
+  eventId: string;
+  marketTitle: string;
+  resolutionTs?: string; // ISO, 파일에 없을 때 사용
+  replaySpeed: number; // 1 = 실시간, 60 = 60배속
+}
+
 export interface RiskConfig {
   maxDailyLossPct: number; // e.g. -2% -> -0.02
   maxConsecutiveLosses: number; // e.g. 2
@@ -21,11 +31,20 @@ export interface StrategyConfig {
   maxVolatility30mForEntry: number; // 최근 30분 변동성 상한
 }
 
+export interface MockSimulatorConfig {
+  orderFillDelayMs: number; // 주문 체결 지연 (ms)
+  slippagePct: number; // 호가 갭 시뮬레이션 (0.01 = 1%)
+  logFilePath: string; // JSONL 구조화 로그 저장 경로
+}
+
 export interface BotConfig {
   mode: TradingMode;
   baseCapitalUsd: number;
   risk: RiskConfig;
   strategy: StrategyConfig;
+  mock?: MockSimulatorConfig;
+  marketDataMode: MarketDataMode;
+  replay?: ReplayConfig;
 }
 
 // NOTE: 이 파일의 값만 수정해서 전략/리스크 수치를 조정할 수 있게 한다.
@@ -50,6 +69,18 @@ export const botConfig: BotConfig = {
     stopLossWindowMinutes: 10,
     volumeSpikeMultiple: 2,
     maxVolatility30mForEntry: 0.01
+  },
+  mock: {
+    orderFillDelayMs: 500,
+    slippagePct: 0.005,
+    logFilePath: "logs/bot.jsonl"
+  },
+  marketDataMode: "MOCK",
+  replay: {
+    filePath: "data/replays/sample_event.jsonl",
+    eventId: "replay-event-1",
+    marketTitle: "Replay Sample Event",
+    replaySpeed: 60
   }
 } as const;
 

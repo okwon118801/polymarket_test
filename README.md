@@ -10,9 +10,13 @@
   - `risk/riskManager.ts` – 하루 최대 손실, 연속 손실, 이벤트당/동시 이벤트 제한 등 **최상위 리스크 모듈**
   - `strategy/nearPointNineStrategy.ts` – 0.86~0.89 진입, 0.92~0.96 청산, 종료 30분 전 강제 청산 등 전략 로직
   - `orders/` – **지정가(LIMIT) 주문만을 지원하는** 주문 타입/실행 모듈 (1단계는 Mock 실행)
-  - `market/mockMarketDataFeed.ts` – 1단계용 모의 시세 데이터
+  - `market/types.ts` – **MarketTick / MarketDataFeed 인터페이스** (Mock·Replay 공통)
+  - `market/mockMarketDataFeed.ts` – MOCK 모드용 가짜 시세 생성
+  - `market/replayMarketDataFeed.ts` – **REPLAY 모드용** 과거 데이터(JSONL) 리플레이
+  - `market/feedFactory.ts` – config `marketDataMode`에 따라 MOCK/REPLAY feed 반환
   - `bot/botEngine.ts` – 주기적인 데이터 수집 → 전략 판단 → 리스크 체크 → 주문 실행 루프
-  - `api/server.ts` – `/api/status`, `/api/bot/toggle`, `/api/config` REST API
+  - `api/server.ts` – `/api/status`, `/api/bot/toggle`, `/api/market-mode`, `/api/replay/*` 등 REST API
+  - `data/replays/sample_event.jsonl` – 샘플 리플레이 데이터 (0.86~0.96 가격 + 급락 구간)
 - `frontend` – React + TypeScript + Vite
   - 봇 ON/OFF 토글, 활성 포지션, 오늘 손익 등을 보여주는 간단한 대시보드
 
@@ -30,8 +34,40 @@ npm install
 npm run dev
 ```
 
-- 백엔드: `http://localhost:4000`
+- 백엔드: `http://localhost:4001`
 - 프론트엔드: `http://localhost:5173`
+
+## Mock vs Replay 차이
+
+| 구분 | MOCK | REPLAY |
+|------|------|--------|
+| 데이터 소스 | 코드 내부에서 가짜 시세 생성 (랜덤/시나리오) | **과거 데이터 파일(JSONL)** 을 한 줄씩 재생 |
+| 용도 | 전략·리스크 로직 검증, UI/플로우 테스트 | 동일 전략을 **고정된 과거 구간**에서 반복 검증 |
+| 시간 | 실시간 타이머(10초 간격 틱) | 재생 속도(1x, 60x 등)에 따라 틱 진행 |
+| 파일 | 없음 | `backend/data/replays/*.jsonl` (샘플: `sample_event.jsonl`) |
+
+### REPLAY 모드 실행 방법
+
+1. **백엔드는 반드시 `backend` 디렉토리에서 실행** (리플레이 파일 경로 `data/replays/` 기준).
+
+   ```bash
+   cd backend
+   npm install
+   npm run dev
+   ```
+
+2. 프론트엔드에서 Data Mode를 **REPLAY**로 선택.
+3. 리플레이 파일 선택 (예: `sample_event.jsonl`), 배속(1x/10x/60x/120x) 선택.
+4. **재생** 클릭 후 **봇 시작** 클릭 → 리플레이가 진행되며 봇이 자동매매 판단.
+5. **일시정지 / 재개 / 정지**로 재생 제어. 진행률과 현재 tick 시각(ts)은 UI에 표시됨.
+
+리플레이 데이터 형식(JSONL 한 줄 예시):
+
+```json
+{"ts":"2025-12-01T10:00:00Z","price":0.878,"volume":1200,"time_to_resolution_min":240}
+```
+
+파일에 `event_id`, `market_title`, `resolution_ts` 등이 없으면 `tradingConfig.replay` 에서 지정한 값이 사용됩니다.
 
 ## 리스크 관리 및 안전장치
 

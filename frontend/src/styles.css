@@ -163,4 +163,42 @@ tr:last-child td {
   color: #f97373;
 }
 
+.replay-card {
+  background: rgba(15, 23, 42, 0.9);
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 32px;
+}
+
+.replay-card h2 {
+  margin: 0 0 16px;
+  font-size: 18px;
+}
+
+.replay-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  align-items: center;
+}
+
+.replay-controls select {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(71, 85, 105, 0.8);
+  background: rgba(15, 23, 42, 0.95);
+  color: #e5e7eb;
+}
+
+.replay-progress {
+  width: 100%;
+  margin-top: 8px;
+  font-size: 13px;
+  color: #9ca3af;
+}
+
+.replay-progress .label {
+  margin-right: 6px;
+}
+
 

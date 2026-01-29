@@ -24,6 +24,8 @@ export interface ExecutedOrder extends OrderRequest {
   filledPrice: number;
 }
 
+export type ExitReason = "TAKE_PROFIT" | "STOP_LOSS" | "FORCE_EXIT";
+
 export interface Position {
   id: string;
   eventId: string;
@@ -31,11 +33,12 @@ export interface Position {
   avgEntryPrice: number;
   size: number;
   openTimestamp: number;
-  // for risk tracking
   realizedPnlUsd: number;
   unrealizedPnlUsd: number;
   closed: boolean;
   closedTimestamp?: number;
+  exitPrice?: number;
+  exitReason?: ExitReason;
 }
 
 export interface PnlSnapshot {

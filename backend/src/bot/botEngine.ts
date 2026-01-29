@@ -1,5 +1,6 @@
 import { botConfig } from "../config/tradingConfig";
-import { getMockMarketTicks, getPriceHistory, resetMockMarket } from "../market/mockMarketDataFeed";
+import { clearFeedCache, getMarketDataFeed } from "../market/feedFactory";
+import type { MarketTick } from "../market/types";
 import { MockOrderExecutor } from "../orders/mockOrderExecutor";
 import { OrderRequest, Position } from "../orders/orderTypes";
 import { RiskManager } from "../risk/riskManager";
@@ -11,6 +12,18 @@ import {
   resetBotState
 } from "./stateStore";
 
+function marketSnapshotFromTick(tick: { event: { id: string; title: string; secondsToResolution: number }; yesPrice: number; noPrice: number; volatility30m: number; timestamp: number }) {
+  return {
+    eventId: tick.event.id,
+    marketTitle: tick.event.title,
+    yesPrice: tick.yesPrice,
+    noPrice: tick.noPrice,
+    volatility30m: tick.volatility30m,
+    secondsToResolution: tick.event.secondsToResolution,
+    timestamp: tick.timestamp
+  };
+}
+
 const POLL_INTERVAL_MS = 10_000;
 
 export class BotEngine {
@@ -20,6 +33,8 @@ export class BotEngine {
 
   start() {
     if (this.timer) return;
+    const feed = getMarketDataFeed();
+    feed.start?.();
     this.timer = setInterval(() => this.tick().catch(console.error), POLL_INTERVAL_MS);
   }
 
@@ -27,6 +42,7 @@ export class BotEngine {
     if (!this.timer) return;
     clearInterval(this.timer);
     this.timer = null;
+    getMarketDataFeed().stop?.();
   }
 
   isRunning() {
@@ -35,14 +51,16 @@ export class BotEngine {
 
   resetScenario() {
     resetBotState();
-    resetMockMarket();
+    getMarketDataFeed().reset();
+    clearFeedCache();
     this.riskManager = new RiskManager();
   }
 
   private async tick() {
     if (!botState.botEnabled) return;
 
-    const ticks = getMockMarketTicks();
+    const feed = getMarketDataFeed();
+    const ticks = feed.getTicks();
 
     // UI용 현재 가격 스냅샷 저장
     updatePrices(
@@ -81,18 +99,18 @@ export class BotEngine {
     });
 
     for (const order of decision.ordersToPlace) {
-      await this.tryExecuteEntryOrder(order);
+      await this.tryExecuteEntryOrder(order, ticks);
     }
   }
 
-  private async handleExitsAndStopLoss(ticks: ReturnType<typeof getMockMarketTicks>) {
+  private async handleExitsAndStopLoss(ticks: MarketTick[]) {
     for (const pos of botState.positions) {
       if (pos.closed) continue;
       const tick = ticks.find(t => t.event.id === pos.eventId);
       if (!tick) continue;
 
       const currentPrice = pos.side === "YES" ? tick.yesPrice : tick.noPrice;
-      const priceHist = getPriceHistory(pos.eventId);
+      const priceHist = getMarketDataFeed().getPriceHistory(pos.eventId);
 
       // 10분 내 -6% 하락 체크
       const TEN_MIN_MS = botConfig.strategy.stopLossWindowMinutes * 60 * 1000;
@@ -132,7 +150,7 @@ export class BotEngine {
     }
   }
 
-  private async tryExecuteEntryOrder(order: OrderRequest) {
+  private async tryExecuteEntryOrder(order: OrderRequest, ticks: MarketTick[]) {
     const notionalUsd = order.price * order.size * botConfig.baseCapitalUsd;
 
     const riskCheck = this.riskManager.canPlaceOrder(order, notionalUsd);
@@ -141,11 +159,14 @@ export class BotEngine {
         timestamp: Date.now(),
         level: "WARN",
         eventId: order.eventId,
-        message: `진입 거부 (리스크 한도 초과): ${riskCheck.reason}`
+        message: `진입 거부 (리스크 한도 초과): ${riskCheck.reason}`,
+        decisionTrigger: "RISK_REJECT",
+        payload: { reason: riskCheck.reason }
       });
       return;
     }
 
+    const tick = ticks.find(t => t.event.id === order.eventId);
     const exec = await this.executor.execute(order);
     botState.executedOrders.push(exec);
 
@@ -169,9 +190,10 @@ export class BotEngine {
       timestamp: Date.now(),
       level: "INFO",
       eventId: order.eventId,
-      message: `진입 (LIMIT BUY) side=${order.side} price=${order.price.toFixed(
-        3
-      )} size=${order.size}`
+      message: `진입 (LIMIT BUY) side=${order.side} price=${order.price.toFixed(3)} size=${order.size} filled=${exec.filledPrice.toFixed(3)}`,
+      decisionTrigger: "ORDER_FILLED",
+      marketSnapshot: tick ? marketSnapshotFromTick(tick) : undefined,
+      payload: { orderPrice: order.price, filledPrice: exec.filledPrice, size: order.size }
     });
   }
 
@@ -183,26 +205,44 @@ export class BotEngine {
     if (position.closed) return;
 
     const pnlPerShare =
-      (position.side === "YES" ? exitPrice - position.avgEntryPrice : position.avgEntryPrice - exitPrice);
-
+      position.side === "YES"
+        ? exitPrice - position.avgEntryPrice
+        : position.avgEntryPrice - exitPrice;
     const realized = pnlPerShare * position.size * botConfig.baseCapitalUsd;
+
     position.closed = true;
     position.closedTimestamp = Date.now();
     position.realizedPnlUsd = realized;
+    position.exitPrice = exitPrice;
+    position.exitReason = reason;
 
     botState.realizedPnlUsd += realized;
-
     this.riskManager.onPositionClosed(position, realized);
-
     updateEventPhase(position.eventId, "EXITED");
+
+    const trigger =
+      reason === "TAKE_PROFIT"
+        ? "TAKE_PROFIT"
+        : reason === "STOP_LOSS"
+          ? "STOP_LOSS"
+          : "FORCE_EXIT";
+    const ticks = getMarketDataFeed().getTicks();
+    const tick = ticks.find(t => t.event.id === position.eventId);
 
     appendLog({
       timestamp: Date.now(),
       level: realized >= 0 ? "INFO" : "WARN",
       eventId: position.eventId,
-      message: `청산 (${reason}) price=${exitPrice.toFixed(
-        3
-      )} pnlUsd=${realized.toFixed(2)}`
+      message: `청산 (${reason}) price=${exitPrice.toFixed(3)} pnlUsd=${realized.toFixed(2)}`,
+      decisionTrigger: trigger,
+      marketSnapshot: tick ? marketSnapshotFromTick(tick) : undefined,
+      payload: {
+        entryPrice: position.avgEntryPrice,
+        exitPrice,
+        size: position.size,
+        realizedPnlUsd: realized,
+        holdingMs: (position.closedTimestamp ?? Date.now()) - position.openTimestamp
+      }
     });
   }
 }

@@ -34,3 +34,6 @@ coverage/
 # Misc
 *.cache
 .cache/
+
+# Structured logs (JSONL)
+logs/
